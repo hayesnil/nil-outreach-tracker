@@ -31,12 +31,13 @@ async function refreshCloudUI(){
  if(!currentUser){cloudStatus('Not signed in · browser-only mode');$('cloud-load').hidden=true;$('cloud-import').hidden=true;return}
  cloudStatus('Signed in: '+currentUser.email);
  const {data:rows,error}=await cloudClient.from('outreach').select('id').eq('user_id',currentUser.id).limit(1);
- if(error){$('cloud-load').hidden=true;$('cloud-import').hidden=true;cloudMsg('Signed in, but could not check cloud records: '+error.message+' Check the outreach table and its RLS policies.');return}
- $('cloud-load').hidden=false;$('cloud-import').hidden=!(rows.length===0&&data.length>0);
+ if(error){cloudLoaded=false;$('cloud-load').hidden=true;$('cloud-import').hidden=true;cloudMsg('Signed in, but could not check cloud records: '+error.message+' Check the outreach table and its RLS policies.');return}
+ cloudLoaded=rows.length===0;cloudIds=new Set();$('cloud-load').hidden=false;$('cloud-import').hidden=!(rows.length===0&&data.length>0);
  cloudMsg(rows.length?'Cloud records exist. Choose “Load my cloud records” to display them; this keeps a local backup first.':(data.length?'Your cloud account has no records yet. Upload the records on this device only if these are the records you want in the cloud.':'Your cloud account is ready. Add a record to start syncing.'));
 }
 async function syncCloudRecord(x){
  if(!currentUser)return;
+ if(!cloudLoaded)throw new Error('Load your cloud records first so existing entries are not duplicated. Your local change is saved on this device.');
  const payload=cloudPayload(x);let result;
  if(cloudIds.has(String(x.id))){
   result=await cloudClient.from('outreach').update({company:payload.company,method:payload.method,date_contacted:payload.date_contacted,status:payload.status,contact:payload.contact,notes:payload.notes}).eq('id',x.id).eq('user_id',currentUser.id).select('id').maybeSingle();
@@ -49,6 +50,7 @@ async function syncCloudRecord(x){
  }else if(result.data?.id!==undefined){cloudIds.add(String(result.data.id))}
 }
 async function removeCloudRecord(id){
+ if(currentUser&&!cloudLoaded)throw new Error('Load your cloud records before deleting cloud entries.');
  if(currentUser&&cloudIds.has(String(id))){
   const {error}=await cloudClient.from('outreach').delete().eq('id',id).eq('user_id',currentUser.id);
   if(error)throw error;cloudIds.delete(String(id));
@@ -60,7 +62,7 @@ async function loadCloudRecords(){
   const {data:rows,error}=await cloudClient.from('outreach').select('id,user_id,company,method,date_contacted,status,contact,notes,created_at,updated_at').eq('user_id',currentUser.id).order('created_at',{ascending:false});
   if(error)throw error;
   try{localStorage.setItem('hs-nil-outreach-pre-cloud-backup',JSON.stringify({data,activity,seq,backedUpAt:new Date().toISOString()}))}catch(e){}
-  data=(rows||[]).map(rowFromCloud);cloudIds=new Set(data.map(x=>String(x.id)));save();render();cloudMsg('Loaded '+data.length+' cloud record(s). A snapshot of the previous local records was kept on this device.');$('cloud-import').hidden=true;
+  data=(rows||[]).map(rowFromCloud);cloudIds=new Set(data.map(x=>String(x.id)));cloudLoaded=true;save();render();cloudMsg('Loaded '+data.length+' cloud record(s). A snapshot of the previous local records was kept on this device.');$('cloud-import').hidden=true;
  }catch(e){cloudMsg('Could not load cloud records: '+e.message)}finally{cloudBusy=false}
 }
 async function uploadLocalRecords(){
@@ -74,7 +76,7 @@ async function uploadLocalRecords(){
    const {data:inserted,error}=await cloudClient.from('outreach').insert(payloads).select('id,user_id,company,method,date_contacted,status,contact,notes,created_at,updated_at');
    if(error)throw error;
    try{localStorage.setItem('hs-nil-outreach-pre-cloud-backup',JSON.stringify({data:localCopy,activity,seq,backedUpAt:new Date().toISOString()}))}catch(e){}
-   data=(inserted||[]).map(rowFromCloud);cloudIds=new Set(data.map(x=>String(x.id)));save();render();
+   data=(inserted||[]).map(rowFromCloud);cloudIds=new Set(data.map(x=>String(x.id)));cloudLoaded=true;save();render();
   }
   $('cloud-import').hidden=true;$('cloud-load').hidden=false;cloudMsg('Uploaded '+payloads.length+' record(s) to your account. They are now associated with your signed-in user.');
  }catch(e){cloudMsg('Upload did not complete: '+e.message+' Your local records remain on this device.')}finally{cloudBusy=false}
@@ -97,12 +99,12 @@ async function authAction(kind){
 }
 $('auth-signin').addEventListener('click',()=>authAction('signin'));
 $('auth-signup').addEventListener('click',()=>authAction('signup'));
-$('auth-signout').addEventListener('click',async()=>{try{const {error}=await cloudClient.auth.signOut();if(error)throw error;currentUser=null;cloudIds=new Set();await refreshCloudUI();cloudMsg('Signed out. Changes made from now on stay in this browser unless you sign in again.')}catch(e){cloudMsg('Could not sign out: '+e.message)}});
+$('auth-signout').addEventListener('click',async()=>{try{const {error}=await cloudClient.auth.signOut();if(error)throw error;currentUser=null;cloudIds=new Set();cloudLoaded=false;await refreshCloudUI();cloudMsg('Signed out. Changes made from now on stay in this browser unless you sign in again.')}catch(e){cloudMsg('Could not sign out: '+e.message)}});
 $('cloud-load').addEventListener('click',loadCloudRecords);
 $('cloud-import').addEventListener('click',uploadLocalRecords);
 if(cloudClient){
- cloudClient.auth.getSession().then(({data,error})=>{if(error){cloudMsg('Could not restore session: '+error.message);return}currentUser=data.session?.user||null;refreshCloudUI()});
- cloudClient.auth.onAuthStateChange((_event,session)=>{currentUser=session?.user||null;refreshCloudUI()});
+ cloudClient.auth.getSession().then(({data,error})=>{if(error){cloudMsg('Could not restore session: '+error.message);return}currentUser=data.session?.user||null;cloudLoaded=false;cloudIds=new Set();refreshCloudUI()});
+ cloudClient.auth.onAuthStateChange((_event,session)=>{currentUser=session?.user||null;cloudLoaded=false;cloudIds=new Set();refreshCloudUI()});
 }
 function render(){let total=data.length,dm=data.filter(x=>['DM','Both'].includes(x.method)).length,em=data.filter(x=>['Email','Both'].includes(x.method)).length,responses=data.filter(x=>x.status!=='Awaiting response').length;$('n-total').textContent=total;$('n-dm').textContent=dm;$('n-email').textContent=em;$('n-responses').textContent=responses;let counts=Object.fromEntries(statuses.map(s=>[s,data.filter(x=>x.status===s).length]));$('chart').innerHTML=statuses.map((s,i)=>'<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span>'+esc(s)+'</span><b>'+counts[s]+'</b></div><div style="height:5px;background:#172c43;border-radius:5px"><div style="height:5px;border-radius:5px;width:'+(total?counts[s]/total*100:0)+'%;background:'+['#568ee8','#42c99a','#a78bfa','#22c55e','#f87171'][i]+'"></div></div></div>').join('');$('rate').textContent=(total?Math.round((total-counts['Awaiting response'])/total*100):0)+'%';
 let visible=data.filter(x=>(filter==='All'||(filter==='DM'?['DM','Both'].includes(x.method):filter==='Email'?['Email','Both'].includes(x.method):x.status===filter))&&[x.company,x.method,x.status,x.notes,x.contact].join(' ').toLowerCase().includes(search.toLowerCase()));
