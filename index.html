@@ -32,7 +32,7 @@ async function refreshCloudUI(){
  cloudStatus('Signed in: '+currentUser.email);
  const {data:rows,error}=await cloudClient.from('outreach').select('id').eq('user_id',currentUser.id).limit(1);
  if(error){cloudLoaded=false;$('cloud-load').hidden=true;$('cloud-import').hidden=true;cloudMsg('Signed in, but could not check cloud records: '+error.message+' Check the outreach table and its RLS policies.');return}
- cloudLoaded=rows.length===0&&data.length===0;cloudIds=new Set();$('cloud-load').hidden=false;$('cloud-import').hidden=!(rows.length===0&&data.length>0);
+ if(!cloudLoaded)cloudLoaded=rows.length===0&&data.length===0;$('cloud-load').hidden=false;$('cloud-import').hidden=!(rows.length===0&&data.length>0);
  cloudMsg(rows.length?'Cloud records exist. Choose “Load my cloud records” to display them; this keeps a local backup first.':(data.length?'Your cloud account has no records yet. Upload the records on this device only if these are the records you want in the cloud.':'Your cloud account is ready. Add a record to start syncing.'));
 }
 async function syncCloudRecord(x){
@@ -104,7 +104,7 @@ $('cloud-load').addEventListener('click',loadCloudRecords);
 $('cloud-import').addEventListener('click',uploadLocalRecords);
 if(cloudClient){
  cloudClient.auth.getSession().then(({data,error})=>{if(error){cloudMsg('Could not restore session: '+error.message);return}currentUser=data.session?.user||null;cloudLoaded=false;cloudIds=new Set();refreshCloudUI()});
- cloudClient.auth.onAuthStateChange((_event,session)=>{currentUser=session?.user||null;cloudLoaded=false;cloudIds=new Set();refreshCloudUI()});
+ cloudClient.auth.onAuthStateChange((_event,session)=>{const nextUser=session?.user||null;if(!nextUser||(currentUser&&currentUser.id!==nextUser.id)){cloudLoaded=false;cloudIds=new Set()}currentUser=nextUser;refreshCloudUI()});
 }
 function render(){let total=data.length,dm=data.filter(x=>['DM','Both'].includes(x.method)).length,em=data.filter(x=>['Email','Both'].includes(x.method)).length,responses=data.filter(x=>x.status!=='Awaiting response').length;$('n-total').textContent=total;$('n-dm').textContent=dm;$('n-email').textContent=em;$('n-responses').textContent=responses;let counts=Object.fromEntries(statuses.map(s=>[s,data.filter(x=>x.status===s).length]));$('chart').innerHTML=statuses.map((s,i)=>'<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span>'+esc(s)+'</span><b>'+counts[s]+'</b></div><div style="height:5px;background:#172c43;border-radius:5px"><div style="height:5px;border-radius:5px;width:'+(total?counts[s]/total*100:0)+'%;background:'+['#568ee8','#42c99a','#a78bfa','#22c55e','#f87171'][i]+'"></div></div></div>').join('');$('rate').textContent=(total?Math.round((total-counts['Awaiting response'])/total*100):0)+'%';
 let visible=data.filter(x=>(filter==='All'||(filter==='DM'?['DM','Both'].includes(x.method):filter==='Email'?['Email','Both'].includes(x.method):x.status===filter))&&[x.company,x.method,x.status,x.notes,x.contact].join(' ').toLowerCase().includes(search.toLowerCase()));
