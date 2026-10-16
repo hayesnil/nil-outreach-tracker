@@ -32,7 +32,7 @@ async function refreshCloudUI(){
  cloudStatus('Signed in: '+currentUser.email);
  const {data:rows,error}=await cloudClient.from('outreach').select('id').eq('user_id',currentUser.id).limit(1);
  if(error){cloudLoaded=false;$('cloud-load').hidden=true;$('cloud-retry').hidden=true;$('cloud-import').hidden=true;cloudMsg('Signed in, but could not check cloud records: '+error.message+' Check the outreach table and its RLS policies.');return}
- if(!cloudLoaded)cloudLoaded=rows.length===0&&data.length===0;$('cloud-load').hidden=false;$('cloud-retry').hidden=!cloudLoaded;$('cloud-import').hidden=!(rows.length===0&&data.length>0);
+ if(!cloudLoaded)cloudLoaded=rows.length===0&&data.length===0;$('cloud-load').hidden=false;$('cloud-retry').hidden=!(data.length>0);$('cloud-import').hidden=!(rows.length===0&&data.length>0);
  cloudMsg(rows.length?'Cloud records exist. Choose “Load my cloud records” to display them; this keeps a local backup first.':(data.length?'Your cloud account has no records yet. Upload the records on this device only if these are the records you want in the cloud.':'Your cloud account is ready. Add a record to start syncing.'));
 }
 async function syncCloudRecord(x){
@@ -103,8 +103,11 @@ $('auth-signup').addEventListener('click',()=>authAction('signup'));
 $('auth-signout').addEventListener('click',async()=>{try{const {error}=await cloudClient.auth.signOut();if(error)throw error;currentUser=null;cloudIds=new Set();cloudLoaded=false;await refreshCloudUI();cloudMsg('Signed out. Changes made from now on stay in this browser unless you sign in again.')}catch(e){cloudMsg('Could not sign out: '+e.message)}});
 $('cloud-load').addEventListener('click',loadCloudRecords);
 $('cloud-retry').addEventListener('click',async()=>{
- if(!currentUser||!cloudLoaded)return;
- if(!confirm('Send this device’s current entries to your cloud account? This will add missing entries and update matching ones. It will not delete cloud records.'))return;
+ if(!currentUser||!data.length)return;
+ if(!confirm('Send this device’s current entries to your cloud account? This will add missing entries and update matching ones. It will not delete cloud records. Make sure this is the device with the latest entries.'))return;
+ const {data:cloudRows,error:checkError}=await cloudClient.from('outreach').select('id').eq('user_id',currentUser.id);
+ if(checkError){cloudMsg('Could not check cloud records before retry: '+checkError.message);return}
+ cloudIds=new Set((cloudRows||[]).map(row=>String(row.id)));cloudLoaded=true;
  const snapshot=data.map(x=>({...x}));let synced=0;const failures=[];
  for(const x of snapshot){try{await syncCloudRecord(x);synced++}catch(err){failures.push((x.company||'Entry')+': '+(err?.message||String(err)))}}
  save();render();
