@@ -88,7 +88,7 @@ async function authAction(kind){
  cloudMsg(kind==='signup'?'Creating account…':'Signing in…');
  try{
   if(kind==='signup'){
-   const {data,error}=await cloudClient.auth.signUp({email,password});if(error)throw error;
+   const {data,error}=await cloudClient.auth.signUp({email,password,options:{emailRedirectTo:'https://hayesnil.github.io/nil-outreach-tracker/'}});if(error)throw error;
    if(data.session){currentUser=data.session.user;await refreshCloudUI();cloudMsg('Account created and signed in. Choose whether to upload local records or load cloud records.')}
    else cloudMsg('Account request submitted. Check your email for a confirmation link, then return here and sign in.');
   }else{
